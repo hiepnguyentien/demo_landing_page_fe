@@ -11,6 +11,10 @@ function getClickId(): string {
   return new URLSearchParams(window.location.search).get('click_id')?.trim() ?? '';
 }
 
+function getAffiliateId(): string {
+  return new URLSearchParams(window.location.search).get('affiliate_id')?.trim() ?? '';
+}
+
 function getDeviceOs(): DeviceOs {
   return /iPad|iPhone|iPod/i.test(navigator.userAgent) ? 'IOS' : 'ANDROID';
 }
@@ -21,6 +25,7 @@ function isValidPhone(phone: string): boolean {
 
 function App() {
   const clickId = useMemo(getClickId, []);
+  const affiliateId = useMemo(getAffiliateId, []);
   const deviceOs = useMemo(getDeviceOs, []);
   const [requirePhone, setRequirePhone] = useState(true);
   const [phone, setPhone] = useState('');
@@ -68,12 +73,59 @@ function App() {
 
     setSubmitting(true);
     try {
+      // 1. Ghi nhận lượt click từ Landing Page về Backend
       await recordAffiliateClick({
         clickId,
         phone: requirePhone ? phone.replace(/[\s-]/g, '') : null,
         os: deviceOs,
       });
-      window.location.assign(deviceOs === 'IOS' ? config.appStoreUrl : config.googlePlayUrl);
+
+      // 2. Tự động copy mã clickId vào Clipboard làm fallback cho Mobile App
+      try {
+        if (navigator?.clipboard?.writeText) {
+          await navigator.clipboard.writeText(clickId);
+        }
+      } catch {
+        // Trình duyệt không cấp quyền clipboard thì bỏ qua
+      }
+
+      // 3. Điều hướng mở App hoặc Store theo hệ điều hành
+      if (deviceOs === 'ANDROID') {
+        // Android Chrome Intent:
+        // - Nếu đã cài app: Mở thẳng app ngay lập tức
+        // - Nếu chưa cài app: Mở Google Play Store kèm referrer
+        const packageId = 'com.example.demo_affiliate';
+        const queryParams: Record<string, string> = {
+          click_id: clickId,
+          screen: 'home',
+        };
+        if (affiliateId) {
+          queryParams.affiliate_id = affiliateId;
+        }
+        const query = new URLSearchParams(queryParams).toString();
+
+        const playUrl =
+          `https://play.google.com/store/apps/details?id=${packageId}` +
+          `&referrer=${encodeURIComponent(query)}`;
+
+        const intentUrl =
+          `intent://demo-mkt-aff.bluetechnology.vn/open?${query}` +
+          `#Intent;scheme=https;package=${packageId};` +
+          `S.browser_fallback_url=${encodeURIComponent(playUrl)};end`;
+
+        window.location.assign(intentUrl);
+      } else {
+        // iOS: Sử dụng Universal Link /open (hoặc fallback sang App Store)
+        const baseUrl = config.apiBaseUrl || window.location.origin;
+        const openUrl = new URL('/open', baseUrl);
+        openUrl.searchParams.set('click_id', clickId);
+        if (affiliateId) {
+          openUrl.searchParams.set('affiliate_id', affiliateId);
+        }
+        openUrl.searchParams.set('screen', 'home');
+
+        window.location.assign(openUrl.toString());
+      }
     } catch (error: unknown) {
       setFormError(
         error instanceof Error
@@ -96,7 +148,6 @@ function App() {
       </header>
 
       <section className="hero">
-
         <div className="download-card">
           {configLoading ? (
             <div className="loading-message">Đang chuẩn bị trải nghiệm...</div>
