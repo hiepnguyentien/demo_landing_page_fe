@@ -82,8 +82,9 @@ function App() {
 
       // 2. Tự động copy mã clickId vào Clipboard làm fallback cho Mobile App
       try {
+        const textToCopy = `affilate_click_id://${clickId}`;
         if (navigator?.clipboard?.writeText) {
-          await navigator.clipboard.writeText(clickId);
+          await navigator.clipboard.writeText(textToCopy);
         }
       } catch {
         // Trình duyệt không cấp quyền clipboard thì bỏ qua
