@@ -4,6 +4,7 @@ export type DeviceOs = 'IOS' | 'ANDROID';
 
 export interface AffiliateConfig {
   requirePhone: boolean;
+  continuousNavigate?: boolean;
 }
 
 interface ClickPayload {
