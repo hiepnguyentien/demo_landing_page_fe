@@ -15,6 +15,14 @@ function getAffiliateId(): string {
   return new URLSearchParams(window.location.search).get('affiliate_id')?.trim() ?? '';
 }
 
+function getPartnerId(): string {
+  return new URLSearchParams(window.location.search).get('partner_id')?.trim() ?? '';
+}
+
+function getPublisherId(): string {
+  return new URLSearchParams(window.location.search).get('pub_id')?.trim() ?? '';
+}
+
 function getDeviceOs(): DeviceOs {
   return /iPad|iPhone|iPod/i.test(navigator.userAgent) ? 'IOS' : 'ANDROID';
 }
@@ -53,6 +61,8 @@ async function copyToClipboard(text: string): Promise<boolean> {
 function App() {
   const clickId = useMemo(getClickId, []);
   const affiliateId = useMemo(getAffiliateId, []);
+  const partnerId = useMemo(getPartnerId, []);
+  const publisherId = useMemo(getPublisherId, []);
   const deviceOs = useMemo(getDeviceOs, []);
   const [requirePhone, setRequirePhone] = useState(true);
   const [, setContinuousNavigate] = useState(false);
@@ -64,8 +74,8 @@ function App() {
   const [formError, setFormError] = useState('');
 
   async function executeRedirect(phoneValue?: string | null) {
-    if (!clickId) {
-      setFormError('Link giới thiệu không hợp lệ. Vui lòng kiểm tra lại đường dẫn.');
+    if (!clickId || !partnerId || !publisherId) {
+      setFormError('Link giới thiệu thiếu thông tin. Vui lòng kiểm tra lại đường dẫn.');
       return;
     }
 
@@ -74,6 +84,8 @@ function App() {
       // 1. Ghi nhận lượt click từ Landing Page về Backend
       await recordAffiliateClick({
         clickId,
+        partnerCode: partnerId,
+        pubId: publisherId,
         phone: phoneValue || null,
         os: deviceOs,
       });
@@ -83,32 +95,34 @@ function App() {
       await copyToClipboard(textToCopy);
 
       // 3. Điều hướng mở App hoặc Store theo hệ điều hành
+      const queryParams: Record<string, string> = {
+        click_id: clickId,
+        screen: 'home',
+      };
+      if (affiliateId) {
+        queryParams.affiliate_id = affiliateId;
+      }
+      const query = new URLSearchParams(queryParams).toString();
+
       if (deviceOs === 'ANDROID') {
         // Android Chrome Intent:
         // - Nếu đã cài app: Mở thẳng app ngay lập tức
-        // - Nếu chưa cài app: Mở Google Play Store kèm referrer
+        // - Nếu chưa cài app: Mở backend /open để chuyển tới link Internal Testing
         const packageId = 'com.blt.demoaffiliate';
-        const queryParams: Record<string, string> = {
-          click_id: clickId,
-          screen: 'home',
-        };
-        if (affiliateId) {
-          queryParams.affiliate_id = affiliateId;
-        }
-        const query = new URLSearchParams(queryParams).toString();
-
-        const playUrl =
-          `https://play.google.com/store/apps/details?id=${packageId}` +
-          `&referrer=${encodeURIComponent(query)}`;
+        const androidFallbackUrl = new URL(
+          '/open',
+          'https://demo-mkt-aff.bluetechnology.vn',
+        );
+        androidFallbackUrl.search = query;
 
         const intentUrl =
           `intent://demo-mkt-aff.bluetechnology.vn/open?${query}` +
           `#Intent;scheme=https;package=${packageId};` +
-          `S.browser_fallback_url=${encodeURIComponent(playUrl)};end`;
+          `S.browser_fallback_url=${encodeURIComponent(androidFallbackUrl.toString())};end`;
 
         window.location.assign(intentUrl);
       } else {
-        // iOS: Sử dụng Universal Link /open (hoặc fallback sang App Store)
+        // iOS: giữ host Universal Link đã cấu hình cho app.
         const baseUrl = config.apiBaseUrl || window.location.origin;
         const openUrl = new URL('/open', baseUrl);
         openUrl.searchParams.set('click_id', clickId);
@@ -116,7 +130,6 @@ function App() {
           openUrl.searchParams.set('affiliate_id', affiliateId);
         }
         openUrl.searchParams.set('screen', 'home');
-
         window.location.assign(openUrl.toString());
       }
     } catch (error: unknown) {
@@ -176,7 +189,8 @@ function App() {
     await executeRedirect(requirePhone ? phone.replace(/[\s-]/g, '') : null);
   }
 
-  const unavailable = !clickId || Boolean(configError);
+  const hasRequiredAttribution = Boolean(clickId && partnerId && publisherId);
+  const unavailable = !hasRequiredAttribution || Boolean(configError);
 
   return (
     <main>
@@ -218,8 +232,8 @@ function App() {
               </button>
             </form>
           )}
-          {!clickId && !configLoading && (
-            <p className="link-hint">Vui lòng truy cập từ link giới thiệu hợp lệ.</p>
+          {!hasRequiredAttribution && !configLoading && (
+            <p className="link-hint">Link giới thiệu thiếu thông tin hoặc không hợp lệ.</p>
           )}
         </div>
       </section>

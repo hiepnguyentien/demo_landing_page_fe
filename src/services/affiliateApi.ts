@@ -9,6 +9,8 @@ export interface AffiliateConfig {
 
 interface ClickPayload {
   clickId: string;
+  partnerCode: string;
+  pubId: string;
   phone?: string | null;
   os: DeviceOs;
 }
