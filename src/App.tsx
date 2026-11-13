@@ -1,5 +1,4 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { config } from './config';
 import {
   DeviceOs,
   getAffiliateConfig,
@@ -69,11 +68,11 @@ function App() {
   const [phone, setPhone] = useState('');
   const [configLoading, setConfigLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [redirecting, setRedirecting] = useState(false);
+  const [appOpenUrl, setAppOpenUrl] = useState('');
   const [configError, setConfigError] = useState('');
   const [formError, setFormError] = useState('');
 
-  async function executeRedirect(phoneValue?: string | null) {
+  async function executeRedirect(phoneValue?: string | null, autoOpen = false) {
     if (!clickId || !partnerId || !publisherId) {
       setFormError('Link giới thiệu thiếu thông tin. Vui lòng kiểm tra lại đường dẫn.');
       return;
@@ -81,7 +80,11 @@ function App() {
 
     setSubmitting(true);
     try {
-      // 1. Ghi nhận lượt click từ Landing Page về Backend
+      // Copy ngay trong luồng thao tác của người dùng để Safari còn cho phép clipboard.
+      const textToCopy = `affilate_click_id://${clickId}`;
+      await copyToClipboard(textToCopy);
+
+      // Ghi nhận lượt click từ Landing Page về Backend sau khi thử copy.
       await recordAffiliateClick({
         clickId,
         partnerCode: partnerId,
@@ -90,11 +93,8 @@ function App() {
         os: deviceOs,
       });
 
-      // 2. Tự động copy mã clickId vào Clipboard làm fallback cho Mobile App
-      const textToCopy = `affilate_click_id://${clickId}`;
-      await copyToClipboard(textToCopy);
-
-      // 3. Điều hướng mở App hoặc Store theo hệ điều hành
+      // Chuẩn bị URL thật sau khi ghi nhận click. Người dùng bấm thẻ <a>
+      // ở bước tiếp theo để iOS nhận đúng thao tác Universal Link trực tiếp.
       const queryParams: Record<string, string> = {
         click_id: clickId,
         screen: 'home',
@@ -104,33 +104,31 @@ function App() {
       }
       const query = new URLSearchParams(queryParams).toString();
 
+      let targetUrl: string;
       if (deviceOs === 'ANDROID') {
-        // Android Chrome Intent:
-        // - Nếu đã cài app: Mở thẳng app ngay lập tức
-        // - Nếu chưa cài app: Mở backend /open để chuyển tới link Internal Testing
         const packageId = 'com.blt.demoaffiliate';
-        const androidFallbackUrl = new URL(
-          '/open',
-          'https://demo-mkt-aff.bluetechnology.vn',
-        );
-        androidFallbackUrl.search = query;
+        // Link Google Play Internal Test
+        const fallbackUrl = 'https://play.google.com/apps/internaltest/4701380010013915536';
 
-        const intentUrl =
+        targetUrl =
           `intent://demo-mkt-aff.bluetechnology.vn/open?${query}` +
           `#Intent;scheme=https;package=${packageId};` +
-          `S.browser_fallback_url=${encodeURIComponent(androidFallbackUrl.toString())};end`;
-
-        window.location.assign(intentUrl);
+          `S.browser_fallback_url=${encodeURIComponent(fallbackUrl)};end`;
       } else {
-        // iOS: giữ host Universal Link đã cấu hình cho app.
-        const baseUrl = config.apiBaseUrl || window.location.origin;
-        const openUrl = new URL('/open', baseUrl);
-        openUrl.searchParams.set('click_id', clickId);
+        // Dùng host khác landing để iOS Safari có thể mở app qua Universal Link.
+        const iosAppLink = new URL('/open', 'https://demo-aff.bluetechnology.vn');
+        iosAppLink.searchParams.set('click_id', clickId);
         if (affiliateId) {
-          openUrl.searchParams.set('affiliate_id', affiliateId);
+          iosAppLink.searchParams.set('affiliate_id', affiliateId);
         }
-        openUrl.searchParams.set('screen', 'home');
-        window.location.assign(openUrl.toString());
+        iosAppLink.searchParams.set('screen', 'home');
+        targetUrl = iosAppLink.toString();
+      }
+
+      setAppOpenUrl(targetUrl);
+      setSubmitting(false);
+      if (autoOpen) {
+        window.location.assign(targetUrl);
       }
     } catch (error: unknown) {
       setFormError(
@@ -139,9 +137,29 @@ function App() {
           : 'Đã có lỗi xảy ra. Bạn vui lòng thử lại.',
       );
       setSubmitting(false);
-      setRedirecting(false);
     }
   }
+
+  // Tự động copy click_id ngay khi vừa mở web (kèm fallback ở lần chạm/click đầu tiên)
+  useEffect(() => {
+    if (!clickId) return;
+    const textToCopy = `affilate_click_id://${clickId}`;
+    void copyToClipboard(textToCopy);
+
+    const handleFirstInteraction = () => {
+      void copyToClipboard(textToCopy);
+      window.removeEventListener('click', handleFirstInteraction);
+      window.removeEventListener('touchstart', handleFirstInteraction);
+    };
+
+    window.addEventListener('click', handleFirstInteraction, { once: true });
+    window.addEventListener('touchstart', handleFirstInteraction, { once: true });
+
+    return () => {
+      window.removeEventListener('click', handleFirstInteraction);
+      window.removeEventListener('touchstart', handleFirstInteraction);
+    };
+  }, [clickId]);
 
   useEffect(() => {
     let active = true;
@@ -153,10 +171,9 @@ function App() {
         setRequirePhone(reqPhone);
         setContinuousNavigate(contNav);
 
-        // Nếu không yêu cầu số điện thoại và bật continuous-navigate: tự động điều hướng ngay
+        // iOS cần lần bấm trực tiếp vào Universal Link; Android vẫn mở Intent sau khi ghi nhận.
         if (!reqPhone && contNav && clickId) {
-          setRedirecting(true);
-          executeRedirect(null);
+          executeRedirect(null, deviceOs === 'ANDROID');
         }
       })
       .catch((error: unknown) => {
@@ -175,7 +192,7 @@ function App() {
     return () => {
       active = false;
     };
-  }, [clickId, affiliateId, deviceOs]);
+  }, [clickId, affiliateId, partnerId, publisherId, deviceOs]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -205,8 +222,12 @@ function App() {
         <div className="download-card">
           {configLoading ? (
             <div className="loading-message">Đang chuẩn bị trải nghiệm...</div>
-          ) : redirecting ? (
-            <div className="loading-message">Đang chuyển hướng đến ứng dụng...</div>
+          ) : submitting ? (
+            <div className="loading-message">Đang chuẩn bị liên kết mở ứng dụng...</div>
+          ) : appOpenUrl ? (
+            <a className="open-app-link" href={appOpenUrl}>
+              Mở ứng dụng <span>→</span>
+            </a>
           ) : (
             <form onSubmit={handleSubmit} noValidate>
               {requirePhone && (

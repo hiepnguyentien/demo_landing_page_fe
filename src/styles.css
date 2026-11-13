@@ -194,6 +194,29 @@ button {
     transform 0.2s;
   width: 100%;
 }
+.open-app-link {
+  background: #1bb5a7;
+  border-radius: 9px;
+  color: white;
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+  margin-top: 16px;
+  padding: 14px 18px;
+  text-decoration: none;
+  transition: background 0.2s, transform 0.2s;
+  width: 100%;
+}
+.open-app-link:hover {
+  background: #12978c;
+  color: white;
+  transform: translateY(-1px);
+}
+.open-app-link span {
+  float: right;
+  font-size: 18px;
+  line-height: 14px;
+}
 button:hover:not(:disabled) {
   background: #12978c;
   transform: translateY(-1px);
