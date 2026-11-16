@@ -199,13 +199,6 @@ function LandingApp() {
     if (clickId) {
       const textToCopy = `affilate_click_id://${clickId}`;
       const res = await copyToClipboard(textToCopy);
-      if (res.success) {
-        showToast(`✓ Đã sao chép: ${textToCopy}`);
-      } else {
-        showToast(`❌ Lỗi sao chép: ${res.error}`, 8000);
-      }
-    } else {
-      showToast('⚠️ Không tìm thấy click_id trên đường dẫn URL để sao chép', 6000);
     }
 
     // Đợi 120ms để clipboard ghi nhận vào hệ điều hành rồi mới mở app hoặc store
@@ -225,11 +218,6 @@ function LandingApp() {
       // Copy ngay trong luồng thao tác của người dùng để Safari còn cho phép clipboard.
       const textToCopy = `affilate_click_id://${clickId}`;
       const copyRes = await copyToClipboard(textToCopy);
-      if (copyRes.success) {
-        showToast(`✓ Đã sao chép: ${textToCopy}`);
-      } else {
-        showToast(`⚠️ Lỗi copy: ${copyRes.error}`, 8000);
-      }
 
       // Ghi nhận lượt click từ Landing Page về Backend sau khi thử copy.
       await recordAffiliateClick({
@@ -285,23 +273,7 @@ function LandingApp() {
     if (!clickId) return;
     const textToCopy = `affilate_click_id://${clickId}`;
 
-    // Thử copy khi vừa vào trang và hiển thị chi tiết kết quả hoặc lỗi
-    void copyToClipboard(textToCopy).then((res) => {
-      if (res.success) {
-        showToast(`✓ Đã sao chép: ${textToCopy}`);
-      } else {
-        showToast(`⚠️ Lỗi copy khi tải trang: ${res.error}`, 8000);
-      }
-    });
-
     const handleFirstInteraction = () => {
-      void copyToClipboard(textToCopy).then((res) => {
-        if (res.success) {
-          showToast(`✓ Đã sao chép: ${textToCopy}`);
-        } else {
-          showToast(`❌ Lỗi copy khi chạm: ${res.error}`, 8000);
-        }
-      });
       window.removeEventListener('click', handleFirstInteraction);
       window.removeEventListener('touchstart', handleFirstInteraction);
     };
@@ -354,14 +326,7 @@ function LandingApp() {
     if (clickId) {
       const textToCopy = `affilate_click_id://${clickId}`;
       const res = await copyToClipboard(textToCopy);
-      if (res.success) {
-        showToast(`✓ Đã sao chép: ${textToCopy}`);
-      } else {
-        showToast(`❌ Lỗi sao chép: ${res.error}`, 8000);
-      }
-    } else {
-      showToast('⚠️ Không tìm thấy click_id trên đường dẫn URL để sao chép', 6000);
-    }
+    } 
     event.preventDefault();
     setFormError('');
 
