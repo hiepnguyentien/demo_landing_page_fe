@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DeviceOs,
   getAffiliateConfig,
@@ -175,6 +175,90 @@ async function copyToClipboard(text: string): Promise<CopyResult> {
   }
 }
 
+function openAppWithFallback(
+  appUrl: string,
+  fallbackUrl: string,
+  onCleanup?: () => void,
+): () => void {
+  let timer: number | undefined;
+  let finished = false;
+  let paused = false;
+
+  function cancelTimer() {
+    if (timer) clearTimeout(timer);
+  }
+
+  function cleanup() {
+    finished = true;
+    cancelTimer();
+
+    document.removeEventListener('visibilitychange', onVisibility);
+    window.removeEventListener('pagehide', cleanup);
+    window.removeEventListener('pageshow', onPageShow);
+    window.removeEventListener('blur', onBlur);
+    window.removeEventListener('focus', onFocus);
+    if (onCleanup) onCleanup();
+  }
+
+  function scheduleFallback(delay = 100) {
+    cancelTimer();
+    const startedAt = Date.now();
+
+    timer = window.setTimeout(() => {
+      if (finished || paused || document.hidden) return;
+
+      // Hộp thoại Safari có thể làm JavaScript bị tạm dừng.
+      // Chờ thêm để nhận sự kiện xuống nền nếu app vừa mở.
+      if (Date.now() - startedAt > delay + 2000) {
+        scheduleFallback(800);
+        return;
+      }
+
+      cleanup();
+      window.location.assign(fallbackUrl);
+    }, delay);
+  }
+
+  function onVisibility() {
+    // Trang xuống nền: có thể app đã mở → huỷ chuyển Store
+    if (document.hidden) cleanup();
+  }
+
+  function onBlur() {
+    // Mất focus có thể chỉ do hộp thoại xác nhận của Safari
+    paused = true;
+    cancelTimer();
+  }
+
+  function onFocus() {
+    if (!finished && paused && !document.hidden) {
+      paused = false;
+      scheduleFallback(800);
+    }
+  }
+
+  function onPageShow(event: PageTransitionEvent) {
+    // Quay lại trang từ bộ nhớ trình duyệt: không chuyển tiếp nữa.
+    if (event.persisted) cleanup();
+  }
+
+  document.addEventListener('visibilitychange', onVisibility);
+  window.addEventListener('pagehide', cleanup);
+  window.addEventListener('pageshow', onPageShow);
+  window.addEventListener('blur', onBlur);
+  window.addEventListener('focus', onFocus);
+
+  scheduleFallback(100);
+
+  try {
+    window.location.assign(appUrl);
+  } catch {
+    // Nếu trình duyệt từ chối mở app, vẫn giữ nhánh dự phòng.
+  }
+
+  return cleanup;
+}
+
 function LandingApp() {
   const clickId = useMemo(getClickId, []);
   const affiliateId = useMemo(getAffiliateId, []);
@@ -192,19 +276,48 @@ function LandingApp() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const openAppLinkRef = useRef<HTMLAnchorElement>(null);
+  const fallbackCleanupRef = useRef<(() => void) | null>(null);
+
+  const startOpenWithFallback = useCallback((targetAppUrl: string) => {
+    if (fallbackCleanupRef.current) {
+      fallbackCleanupRef.current();
+      fallbackCleanupRef.current = null;
+    }
+
+    const storeUrl = deviceOs === 'IOS' ? TESTFLIGHT_APP_URL : GOOGLE_PLAY_APP_URL;
+    fallbackCleanupRef.current = openAppWithFallback(targetAppUrl, storeUrl, () => {
+      fallbackCleanupRef.current = null;
+    });
+  }, [deviceOs]);
+
+  useEffect(() => {
+    return () => {
+      if (fallbackCleanupRef.current) {
+        fallbackCleanupRef.current();
+        fallbackCleanupRef.current = null;
+      }
+    };
+  }, []);
 
   const handleActionClick = async (e: React.MouseEvent<HTMLAnchorElement>, targetUrl: string) => {
     // Ngăn trình duyệt nhảy trang ngay để đảm bảo copy clipboard hoàn tất trong user gesture
     e.preventDefault();
     if (clickId) {
       const textToCopy = `affilate_click_id://${clickId}`;
-      const res = await copyToClipboard(textToCopy);
+      await copyToClipboard(textToCopy);
     }
 
-    // Đợi 120ms để clipboard ghi nhận vào hệ điều hành rồi mới mở app hoặc store
-    window.setTimeout(() => {
-      window.location.href = targetUrl;
-    }, 120);
+    if (targetUrl === appOpenUrl) {
+      startOpenWithFallback(targetUrl);
+    } else {
+      if (fallbackCleanupRef.current) {
+        fallbackCleanupRef.current();
+        fallbackCleanupRef.current = null;
+      }
+      window.setTimeout(() => {
+        window.location.assign(targetUrl);
+      }, 120);
+    }
   };
 
   async function executeRedirect(phoneValue?: string | null) {
@@ -261,7 +374,7 @@ function LandingApp() {
 
     const timer = window.setTimeout(() => {
       openAppLinkRef.current?.click();
-    }, 500);
+    }, 200);
 
     return () => {
       window.clearTimeout(timer);
