@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DeviceOs,
   getAffiliateConfig,
@@ -23,41 +23,159 @@ function getPublisherId(): string {
 }
 
 function getDeviceOs(): DeviceOs {
-  return /iPad|iPhone|iPod/i.test(navigator.userAgent) ? 'IOS' : 'ANDROID';
+  const isIos = /iPad|iPhone|iPod/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  return isIos ? 'IOS' : 'ANDROID';
+}
+
+const TESTFLIGHT_APP_URL = 'itms-beta://testflight.apple.com/join/5MuXJJfD';
+const TESTFLIGHT_WEB_URL = 'https://testflight.apple.com/join/5MuXJJfD';
+const GOOGLE_PLAY_APP_URL = 'https://play.google.com/apps/internaltest/4701380010013915536';
+
+function buildIosSchemeUrl(): string | null {
+  if (window.location.hash || window.location.href.length > 4096) return null;
+  const params = new URLSearchParams(window.location.search);
+  if (['click_id', 'affiliate_id', 'screen'].some(key => params.getAll(key).length > 1)) {
+    return null;
+  }
+  const validId = (value: string | null): value is string =>
+    value !== null && value.length >= 1 && value.length <= 128 &&
+    !/[^A-Za-z0-9._-]/.test(value);
+  const clickId = params.get('click_id');
+  const affiliateId = params.get('affiliate_id');
+  const screen = params.get('screen') ?? 'home';
+  if (!validId(clickId) || (affiliateId !== null && !validId(affiliateId)) ||
+      !['home', 'ekyc', 'disbursement'].includes(screen)) {
+    return null;
+  }
+  const url = new URL('demoaffiliate://open');
+  url.searchParams.set('click_id', clickId);
+  if (affiliateId !== null) url.searchParams.set('affiliate_id', affiliateId);
+  url.searchParams.set('screen', screen);
+  return url.toString();
+}
+
+// BE must serve this React app with HTTP 200 at /open instead of redirecting
+// iOS to TestFlight. This route never fetches config or records another click.
+function IosOpenPage() {
+  const appUrl = useMemo(buildIosSchemeUrl, []);
+  const launchStarted = useRef(false);
+  const [launchError, setLaunchError] = useState(false);
+
+  useEffect(() => {
+    if (!appUrl || launchStarted.current) return;
+    launchStarted.current = true;
+    // Attempt once, immediately, including with React StrictMode effect replay.
+    // Safari may require confirmation or block an automatic scheme launch.
+    // No timeout-to-store: a pending confirmation is not an installation check.
+    try {
+      window.location.replace(appUrl);
+    } catch {
+      setLaunchError(true);
+    }
+  }, [appUrl]);
+
+  return (
+    <main>
+      <header className="topbar">
+        <span className="brand"><span className="brand-mark">A</span> Affiliate</span>
+      </header>
+      <section className="hero">
+        <div className="download-card">
+          <h1>Mở Demo Affiliate</h1>
+          {appUrl ? (
+            <>
+              <p role="status">
+                {launchError
+                  ? 'Safari chưa mở được ứng dụng. Bạn có thể thử lại bên dưới.'
+                  : 'Đang yêu cầu mở ứng dụng. Chọn Mở nếu Safari hỏi xác nhận.'}
+              </p>
+              <p className="link-hint">Nếu ứng dụng chưa mở, bạn có thể thử lại:</p>
+              <a className="open-app-link" href={appUrl}>Mở lại ứng dụng <span>→</span></a>
+            </>
+          ) : (
+            <p className="error-message" role="alert">
+              Link giới thiệu thiếu thông tin hoặc không hợp lệ. Vui lòng mở lại link gốc.
+            </p>
+          )}
+          <p>Chưa cài ứng dụng? Cài bản thử nghiệm qua TestFlight.</p>
+          <a className="open-app-link" href={TESTFLIGHT_APP_URL}>
+            Mở TestFlight để cài <span>→</span>
+          </a>
+          <p className="link-hint">
+            <a href="https://apps.apple.com/app/id899247664">Cài TestFlight</a>
+            {' · '}
+            <a href={TESTFLIGHT_WEB_URL}>Xem lời mời trên web</a>
+          </p>
+          <p className="link-hint">Sau khi cài, quay lại link giới thiệu để mở ứng dụng.</p>
+        </div>
+      </section>
+    </main>
+  );
 }
 
 function isValidPhone(phone: string): boolean {
   return /^\+?[0-9\s-]{9,15}$/.test(phone);
 }
 
-async function copyToClipboard(text: string): Promise<boolean> {
-  try {
-    if (navigator?.clipboard?.writeText) {
+interface CopyResult {
+  success: boolean;
+  error?: string;
+}
+
+async function copyToClipboard(text: string): Promise<CopyResult> {
+  let writeTextError = '';
+  if (navigator?.clipboard?.writeText) {
+    try {
       await navigator.clipboard.writeText(text);
-      return true;
+      return { success: true };
+    } catch (err: unknown) {
+      writeTextError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
     }
-  } catch {
-    // Continue to fallback
+  } else {
+    writeTextError = 'navigator.clipboard.writeText không được hỗ trợ';
   }
 
   try {
     const textArea = document.createElement('textarea');
     textArea.value = text;
+    textArea.setAttribute('readonly', '');
+    // Tối ưu cho iOS Safari & Android: nằm trong viewport, opacity nhỏ, có kích thước để select được text
     textArea.style.position = 'fixed';
-    textArea.style.left = '-9999px';
-    textArea.style.top = '-9999px';
+    textArea.style.top = '0';
+    textArea.style.left = '0';
+    textArea.style.width = '2em';
+    textArea.style.height = '2em';
+    textArea.style.padding = '0';
+    textArea.style.border = 'none';
+    textArea.style.outline = 'none';
+    textArea.style.boxShadow = 'none';
+    textArea.style.background = 'transparent';
+    textArea.style.opacity = '0.01';
+    textArea.style.zIndex = '-1';
     document.body.appendChild(textArea);
     textArea.focus();
-    textArea.select();
+    textArea.setSelectionRange(0, text.length);
+
     const successful = document.execCommand('copy');
     document.body.removeChild(textArea);
-    return successful;
-  } catch {
-    return false;
+    if (successful) {
+      return { success: true };
+    }
+    return {
+      success: false,
+      error: `writeText: [${writeTextError}] | execCommand('copy'): false`,
+    };
+  } catch (err: unknown) {
+    const execError = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    return {
+      success: false,
+      error: `writeText: [${writeTextError}] | execCommand: [${execError}]`,
+    };
   }
 }
 
-function App() {
+function LandingApp() {
   const clickId = useMemo(getClickId, []);
   const affiliateId = useMemo(getAffiliateId, []);
   const partnerId = useMemo(getPartnerId, []);
@@ -71,8 +189,32 @@ function App() {
   const [appOpenUrl, setAppOpenUrl] = useState('');
   const [configError, setConfigError] = useState('');
   const [formError, setFormError] = useState('');
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+  const openAppLinkRef = useRef<HTMLAnchorElement>(null);
 
-  async function executeRedirect(phoneValue?: string | null, autoOpen = false) {
+  const handleActionClick = async (e: React.MouseEvent<HTMLAnchorElement>, targetUrl: string) => {
+    // Ngăn trình duyệt nhảy trang ngay để đảm bảo copy clipboard hoàn tất trong user gesture
+    e.preventDefault();
+    if (clickId) {
+      const textToCopy = `affilate_click_id://${clickId}`;
+      const res = await copyToClipboard(textToCopy);
+      if (res.success) {
+        showToast(`✓ Đã sao chép: ${textToCopy}`);
+      } else {
+        showToast(`❌ Lỗi sao chép: ${res.error}`, 8000);
+      }
+    } else {
+      showToast('⚠️ Không tìm thấy click_id trên đường dẫn URL để sao chép', 6000);
+    }
+
+    // Đợi 120ms để clipboard ghi nhận vào hệ điều hành rồi mới mở app hoặc store
+    window.setTimeout(() => {
+      window.location.href = targetUrl;
+    }, 120);
+  };
+
+  async function executeRedirect(phoneValue?: string | null) {
     if (!clickId || !partnerId || !publisherId) {
       setFormError('Link giới thiệu thiếu thông tin. Vui lòng kiểm tra lại đường dẫn.');
       return;
@@ -82,7 +224,12 @@ function App() {
     try {
       // Copy ngay trong luồng thao tác của người dùng để Safari còn cho phép clipboard.
       const textToCopy = `affilate_click_id://${clickId}`;
-      await copyToClipboard(textToCopy);
+      const copyRes = await copyToClipboard(textToCopy);
+      if (copyRes.success) {
+        showToast(`✓ Đã sao chép: ${textToCopy}`);
+      } else {
+        showToast(`⚠️ Lỗi copy: ${copyRes.error}`, 8000);
+      }
 
       // Ghi nhận lượt click từ Landing Page về Backend sau khi thử copy.
       await recordAffiliateClick({
@@ -93,8 +240,8 @@ function App() {
         os: deviceOs,
       });
 
-      // Chuẩn bị URL thật sau khi ghi nhận click. Người dùng bấm thẻ <a>
-      // ở bước tiếp theo để iOS nhận đúng thao tác Universal Link trực tiếp.
+      // Chuẩn bị URL thật sau khi ghi nhận click. Thẻ <a> sẽ được auto-click
+      // sau 500ms tương tự /test-auto, đồng thời là nút bấm trực tiếp nếu bị chặn.
       const queryParams: Record<string, string> = {
         click_id: clickId,
         screen: 'home',
@@ -104,32 +251,12 @@ function App() {
       }
       const query = new URLSearchParams(queryParams).toString();
 
-      let targetUrl: string;
-      if (deviceOs === 'ANDROID') {
-        const packageId = 'com.blt.demoaffiliate';
-        // Link Google Play Internal Test
-        const fallbackUrl = 'https://play.google.com/apps/internaltest/4701380010013915536';
-
-        targetUrl =
-          `intent://demo-mkt-aff.bluetechnology.vn/open?${query}` +
-          `#Intent;scheme=https;package=${packageId};` +
-          `S.browser_fallback_url=${encodeURIComponent(fallbackUrl)};end`;
-      } else {
-        // Dùng host khác landing để iOS Safari có thể mở app qua Universal Link.
-        const iosAppLink = new URL('/open', 'https://demo-aff.bluetechnology.vn');
-        iosAppLink.searchParams.set('click_id', clickId);
-        if (affiliateId) {
-          iosAppLink.searchParams.set('affiliate_id', affiliateId);
-        }
-        iosAppLink.searchParams.set('screen', 'home');
-        targetUrl = iosAppLink.toString();
-      }
+      // Cả iOS và Android đều gọi trực tiếp custom scheme demoaffiliate://open
+      // Đảm bảo hoạt động ổn định trên cả Chrome, Safari lẫn các trình duyệt nhúng (Messenger, Zalo)
+      const targetUrl = `demoaffiliate://open?${query}`;
 
       setAppOpenUrl(targetUrl);
       setSubmitting(false);
-      if (autoOpen) {
-        window.location.assign(targetUrl);
-      }
     } catch (error: unknown) {
       setFormError(
         error instanceof Error
@@ -140,14 +267,41 @@ function App() {
     }
   }
 
+  // Tự động kích hoạt click thẻ <a> sau 500ms khi link mở app đã sẵn sàng (cơ chế tương tự /test-auto)
+  useEffect(() => {
+    if (!appOpenUrl) return;
+
+    const timer = window.setTimeout(() => {
+      openAppLinkRef.current?.click();
+    }, 500);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [appOpenUrl]);
+
   // Tự động copy click_id ngay khi vừa mở web (kèm fallback ở lần chạm/click đầu tiên)
   useEffect(() => {
     if (!clickId) return;
     const textToCopy = `affilate_click_id://${clickId}`;
-    void copyToClipboard(textToCopy);
+
+    // Thử copy khi vừa vào trang và hiển thị chi tiết kết quả hoặc lỗi
+    void copyToClipboard(textToCopy).then((res) => {
+      if (res.success) {
+        showToast(`✓ Đã sao chép: ${textToCopy}`);
+      } else {
+        showToast(`⚠️ Lỗi copy khi tải trang: ${res.error}`, 8000);
+      }
+    });
 
     const handleFirstInteraction = () => {
-      void copyToClipboard(textToCopy);
+      void copyToClipboard(textToCopy).then((res) => {
+        if (res.success) {
+          showToast(`✓ Đã sao chép: ${textToCopy}`);
+        } else {
+          showToast(`❌ Lỗi copy khi chạm: ${res.error}`, 8000);
+        }
+      });
       window.removeEventListener('click', handleFirstInteraction);
       window.removeEventListener('touchstart', handleFirstInteraction);
     };
@@ -171,9 +325,9 @@ function App() {
         setRequirePhone(reqPhone);
         setContinuousNavigate(contNav);
 
-        // iOS cần lần bấm trực tiếp vào Universal Link; Android vẫn mở Intent sau khi ghi nhận.
+        // Tự động chuẩn bị link và kích hoạt mở app nếu không yêu cầu nhập SĐT
         if (!reqPhone && contNav && clickId) {
-          executeRedirect(null, deviceOs === 'ANDROID');
+          void executeRedirect(null);
         }
       })
       .catch((error: unknown) => {
@@ -195,6 +349,19 @@ function App() {
   }, [clickId, affiliateId, partnerId, publisherId, deviceOs]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+
+    //copy click_id ngay trong luồng thao tác của người dùng để Safari còn cho phép clipboard.
+    if (clickId) {
+      const textToCopy = `affilate_click_id://${clickId}`;
+      const res = await copyToClipboard(textToCopy);
+      if (res.success) {
+        showToast(`✓ Đã sao chép: ${textToCopy}`);
+      } else {
+        showToast(`❌ Lỗi sao chép: ${res.error}`, 8000);
+      }
+    } else {
+      showToast('⚠️ Không tìm thấy click_id trên đường dẫn URL để sao chép', 6000);
+    }
     event.preventDefault();
     setFormError('');
 
@@ -203,7 +370,9 @@ function App() {
       return;
     }
 
-    await executeRedirect(requirePhone ? phone.replace(/[\s-]/g, '') : null);
+    await executeRedirect(
+      requirePhone ? phone.replace(/[\s-]/g, '') : null,
+    );
   }
 
   const hasRequiredAttribution = Boolean(clickId && partnerId && publisherId);
@@ -211,6 +380,12 @@ function App() {
 
   return (
     <main>
+      {toastMessage && (
+        <div className="toast-notification" role="status" aria-live="polite">
+          <span className="toast-icon">✓</span>
+          <span className="toast-text">{toastMessage}</span>
+        </div>
+      )}
       <header className="topbar">
         <a className="brand" href="/" aria-label="Finora trang chủ">
           <span className="brand-mark">A</span>
@@ -225,9 +400,71 @@ function App() {
           ) : submitting ? (
             <div className="loading-message">Đang chuẩn bị liên kết mở ứng dụng...</div>
           ) : appOpenUrl ? (
-            <a className="open-app-link" href={appOpenUrl}>
-              Mở ứng dụng <span>→</span>
-            </a>
+            <div className="open-app-card-content">
+              <p
+                role="status"
+                style={{
+                  fontSize: '14px',
+                  color: '#18233a',
+                  lineHeight: '1.5',
+                  margin: '0 0 14px',
+                  textAlign: 'center',
+                }}
+              >
+                {deviceOs === 'IOS'
+                  ? 'Đang yêu cầu mở ứng dụng. Hãy chọn "Mở" nếu Safari hỏi xác nhận.'
+                  : 'Đang yêu cầu mở ứng dụng...'}
+              </p>
+              <a
+                ref={openAppLinkRef}
+                id="openApp"
+                className="open-app-link"
+                href={appOpenUrl}
+                onClick={(e) => void handleActionClick(e, appOpenUrl)}
+              >
+                Mở ứng dụng <span>→</span>
+              </a>
+              {deviceOs === 'IOS' && (
+                <div style={{ marginTop: '18px', paddingTop: '16px', borderTop: '1px solid #edf3f7' }}>
+                  <p className="privacy-note" style={{ margin: '0 0 10px', fontSize: '13px' }}>
+                    Chưa cài ứng dụng? Cài bản thử nghiệm qua TestFlight:
+                  </p>
+                  <a
+                    className="open-app-link"
+                    style={{
+                      background: 'white',
+                      color: '#244dc9',
+                      border: '1px solid #d8dfec',
+                      marginTop: '0',
+                    }}
+                    href={TESTFLIGHT_APP_URL}
+                    onClick={(e) => void handleActionClick(e, TESTFLIGHT_APP_URL)}
+                  >
+                    Mở TestFlight để cài <span>→</span>
+                  </a>
+                </div>
+              )}
+              {deviceOs === 'ANDROID' && (
+                <div style={{ marginTop: '18px', paddingTop: '16px', borderTop: '1px solid #edf3f7' }}>
+                  <p className="privacy-note" style={{ margin: '0 0 10px', fontSize: '13px' }}>
+                    Chưa cài ứng dụng? Tải bản thử nghiệm qua Google Play:
+                  </p>
+                  <a
+                    className="open-app-link"
+                    style={{
+                      background: 'white',
+                      color: '#244dc9',
+                      border: '1px solid #d8dfec',
+                      marginTop: '0',
+                    }}
+                    href={GOOGLE_PLAY_APP_URL}
+                    onClick={(e) => void handleActionClick(e, GOOGLE_PLAY_APP_URL)}
+                  >
+                    Mở Google Play để cài <span>→</span>
+                  </a>
+                </div>
+              )}
+            </div>
           ) : (
             <form onSubmit={handleSubmit} noValidate>
               {requirePhone && (
@@ -268,6 +505,14 @@ function App() {
       </section>
     </main>
   );
+}
+
+function App() {
+  // Separate components keep /open independent of landing attribution fields
+  // partner_id/pub_id, API availability, and clipboard permission prompts.
+  return getDeviceOs() === 'IOS' && window.location.pathname === '/open'
+    ? <IosOpenPage />
+    : <LandingApp />;
 }
 
 export default App;

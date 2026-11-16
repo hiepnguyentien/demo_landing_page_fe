@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Test Auto Click Mở App</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      display: grid;
+      place-items: center;
+      min-height: 100vh;
+      margin: 0;
+      background: #f4f6fb;
+      padding: 20px;
+    }
+    .card {
+      background: white;
+      padding: 30px;
+      border-radius: 20px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+      max-width: 480px;
+      width: 100%;
+      text-align: center;
+    }
+    h2 { margin-top: 0; font-size: 22px; color: #1e293b; }
+    p { color: #64748b; line-height: 1.5; font-size: 15px; }
+    .btn {
+      display: inline-block;
+      margin-top: 15px;
+      padding: 14px 28px;
+      background: #244dc9;
+      color: white;
+      text-decoration: none;
+      border-radius: 12px;
+      font-weight: 600;
+      font-size: 16px;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(36, 77, 201, 0.25);
+    }
+    .log-box {
+      margin-top: 24px;
+      padding: 14px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      font-family: Consolas, monospace;
+      font-size: 12px;
+      color: #334155;
+      text-align: left;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .hint {
+      margin-top: 15px;
+      font-size: 12px;
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+  <a id="openApp" href="https://demo-aff.bluetechnology.vn/open?click_id=abc123">Mở app</a>
+<script>
+  setTimeout(() => {
+    document.getElementById('openApp').click();
+  }, 500);
+</script>
+</body>
+</html>

@@ -1,0 +1,92 @@
+<!doctype html>
+<!--
+  BE: serve this HTML with HTTP 200 and Content-Type: text/html; charset=utf-8
+  for the iOS GET /open fallback on BOTH associated hosts. Replace only the
+  iOS 302-to-TestFlight branch. Preserve Android fallback and AASA endpoints.
+  Keep the original query string; do not interpolate query values into HTML.
+  Links intercepted by iOS still open the installed app without loading here.
+  Automatically attempt the app scheme ONCE for a valid link. Safari may
+  require confirmation or block an automatic launch. Buttons are recovery.
+  No installation detection, store timers, or click-record API.
+-->
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Mở Demo Affiliate</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; min-height: 100vh; min-height: 100svh;
+      display: grid; place-items: center; background: #f4f6fb; color: #18233a;
+      font-family: system-ui, -apple-system, sans-serif; }
+    main { width: 100%; max-width: 420px; padding: 28px; border-radius: 24px;
+      background: white; box-shadow: 0 12px 48px #18233a0d; }
+    h1 { font-size: 26px; margin: 0 0 12px; }
+    h2 { font-size: 18px; margin: 28px 0 10px; }
+    p { line-height: 1.6; margin: 10px 0 18px; color: #526078; }
+    .button { display: block; width: 100%; padding: 15px; border-radius: 12px;
+      border: 1px solid #d8dfec; background: white; color: #244dc9;
+      text-align: center; text-decoration: none; font: inherit; font-weight: 650; }
+    .primary { background: #244dc9; border-color: #244dc9; color: white; }
+    .secondary { margin-top: 12px; }
+    .small { font-size: 14px; }
+    a { color: #244dc9; }
+    :focus-visible { outline: 3px solid #809af1; outline-offset: 3px; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Mở Demo Affiliate</h1>
+    <section id="installed" hidden>
+      <p id="open-status" role="status">Đang yêu cầu mở ứng dụng. Hãy chọn Mở nếu Safari hỏi xác nhận.</p>
+      <p class="small">Nếu ứng dụng chưa mở, bạn có thể thử lại bằng nút dưới đây.</p>
+      <a id="open-app" class="button primary">Mở ứng dụng</a>
+    </section>
+    <p id="invalid" role="alert" hidden>Link giới thiệu thiếu thông tin hoặc không hợp lệ. Vui lòng mở lại link gốc.</p>
+    <noscript><p>Vui lòng bật JavaScript để mở ứng dụng bằng link giới thiệu.</p></noscript>
+    <h2>Chưa cài ứng dụng?</h2>
+    <p>Cài bản thử nghiệm qua TestFlight, sau đó quay lại link giới thiệu để mở ứng dụng.</p>
+    <a class="button" href="itms-beta://testflight.apple.com/join/5MuXJJfD">Mở TestFlight để cài</a>
+    <p class="small">Nếu chưa có TestFlight, <a href="https://apps.apple.com/app/id899247664">cài TestFlight</a> rồi quay lại trang này.</p>
+    <p class="small"><a href="https://testflight.apple.com/join/5MuXJJfD">Xem lời mời trên web</a></p>
+  </main>
+  <script>
+    (() => {
+      const params = new URLSearchParams(window.location.search);
+      const keys = ['click_id', 'affiliate_id', 'screen'];
+      const hasDuplicate = keys.some(key => params.getAll(key).length > 1);
+      const validId = value => typeof value === 'string' &&
+        value.length >= 1 && value.length <= 128 && !/[^A-Za-z0-9._-]/.test(value);
+      const clickId = params.get('click_id');
+      const affiliateId = params.get('affiliate_id');
+      const screen = params.get('screen') ?? 'home';
+      const valid = !hasDuplicate && validId(clickId) &&
+        (affiliateId === null || validId(affiliateId)) &&
+        ['home', 'ekyc', 'disbursement'].includes(screen) &&
+        !window.location.hash && window.location.href.length <= 4096;
+      if (!valid) {
+        document.getElementById('invalid').hidden = false;
+        return;
+      }
+      const appUrl = new URL('demoaffiliate://open');
+      appUrl.searchParams.set('click_id', clickId);
+      if (affiliateId !== null) appUrl.searchParams.set('affiliate_id', affiliateId);
+      appUrl.searchParams.set('screen', screen);
+      document.getElementById('open-app').href = appUrl.href;
+      document.getElementById('installed').hidden = false;
+      // Run immediately, once per document load, without waiting for an API,
+      // clipboard permission, timeout, or an extra button tap on this page.
+      // This is a launch request, not confirmation that the app is installed.
+      // Do not auto-open TestFlight on a timer: silence does not mean failure.
+      try {
+        window.location.replace(appUrl.href);
+      } catch {
+        document.getElementById('open-status').textContent =
+          'Safari chưa mở được ứng dụng. Bạn có thể thử lại bằng nút dưới đây.';
+      }
+    })();
+  </script>
+</body>
+</html>
