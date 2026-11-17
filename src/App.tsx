@@ -200,7 +200,7 @@ function openAppWithFallback(
     if (onCleanup) onCleanup();
   }
 
-  function scheduleFallback(delay = 100) {
+  function scheduleFallback(delay = 2500) {
     cancelTimer();
     const startedAt = Date.now();
 
@@ -248,7 +248,7 @@ function openAppWithFallback(
   window.addEventListener('blur', onBlur);
   window.addEventListener('focus', onFocus);
 
-  scheduleFallback(100);
+  scheduleFallback();
 
   try {
     window.location.assign(appUrl);
