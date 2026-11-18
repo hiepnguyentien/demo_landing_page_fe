@@ -139,8 +139,7 @@ async function copyToClipboard(text: string): Promise<CopyResult> {
   try {
     const textArea = document.createElement('textarea');
     textArea.value = text;
-    textArea.setAttribute('readonly', '');
-    // Tối ưu cho iOS Safari & Android: nằm trong viewport, opacity nhỏ, có kích thước để select được text
+    textArea.contentEditable = 'true';
     textArea.style.position = 'fixed';
     textArea.style.top = '0';
     textArea.style.left = '0';
@@ -152,12 +151,23 @@ async function copyToClipboard(text: string): Promise<CopyResult> {
     textArea.style.boxShadow = 'none';
     textArea.style.background = 'transparent';
     textArea.style.opacity = '0.01';
-    textArea.style.zIndex = '-1';
+    textArea.style.fontSize = '16px';
     document.body.appendChild(textArea);
+
+    const range = document.createRange();
+    range.selectNodeContents(textArea);
+    const selection = window.getSelection();
+    if (selection) {
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
     textArea.focus();
     textArea.setSelectionRange(0, text.length);
 
     const successful = document.execCommand('copy');
+    if (selection) {
+      selection.removeAllRanges();
+    }
     document.body.removeChild(textArea);
     if (successful) {
       return { success: true };
@@ -175,90 +185,6 @@ async function copyToClipboard(text: string): Promise<CopyResult> {
   }
 }
 
-function openAppWithFallback(
-  appUrl: string,
-  fallbackUrl: string,
-  onCleanup?: () => void,
-): () => void {
-  let timer: number | undefined;
-  let finished = false;
-  let paused = false;
-
-  function cancelTimer() {
-    if (timer) clearTimeout(timer);
-  }
-
-  function cleanup() {
-    finished = true;
-    cancelTimer();
-
-    document.removeEventListener('visibilitychange', onVisibility);
-    window.removeEventListener('pagehide', cleanup);
-    window.removeEventListener('pageshow', onPageShow);
-    window.removeEventListener('blur', onBlur);
-    window.removeEventListener('focus', onFocus);
-    if (onCleanup) onCleanup();
-  }
-
-  function scheduleFallback(delay = 2500) {
-    cancelTimer();
-    const startedAt = Date.now();
-
-    timer = window.setTimeout(() => {
-      if (finished || paused || document.hidden) return;
-
-      // Hộp thoại Safari có thể làm JavaScript bị tạm dừng.
-      // Chờ thêm để nhận sự kiện xuống nền nếu app vừa mở.
-      if (Date.now() - startedAt > delay + 2000) {
-        scheduleFallback(800);
-        return;
-      }
-
-      cleanup();
-      window.location.assign(fallbackUrl);
-    }, delay);
-  }
-
-  function onVisibility() {
-    // Trang xuống nền: có thể app đã mở → huỷ chuyển Store
-    if (document.hidden) cleanup();
-  }
-
-  function onBlur() {
-    // Mất focus có thể chỉ do hộp thoại xác nhận của Safari
-    paused = true;
-    cancelTimer();
-  }
-
-  function onFocus() {
-    if (!finished && paused && !document.hidden) {
-      paused = false;
-      scheduleFallback(800);
-    }
-  }
-
-  function onPageShow(event: PageTransitionEvent) {
-    // Quay lại trang từ bộ nhớ trình duyệt: không chuyển tiếp nữa.
-    if (event.persisted) cleanup();
-  }
-
-  document.addEventListener('visibilitychange', onVisibility);
-  window.addEventListener('pagehide', cleanup);
-  window.addEventListener('pageshow', onPageShow);
-  window.addEventListener('blur', onBlur);
-  window.addEventListener('focus', onFocus);
-
-  scheduleFallback();
-
-  try {
-    window.location.assign(appUrl);
-  } catch {
-    // Nếu trình duyệt từ chối mở app, vẫn giữ nhánh dự phòng.
-  }
-
-  return cleanup;
-}
-
 function LandingApp() {
   const clickId = useMemo(getClickId, []);
   const affiliateId = useMemo(getAffiliateId, []);
@@ -274,50 +200,136 @@ function LandingApp() {
   const [configError, setConfigError] = useState('');
   const [formError, setFormError] = useState('');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [openingState, setOpeningState] = useState<'idle' | 'opening'>('idle');
   const toastTimerRef = useRef<number | null>(null);
-  const openAppLinkRef = useRef<HTMLAnchorElement>(null);
   const fallbackCleanupRef = useRef<(() => void) | null>(null);
 
-  const startOpenWithFallback = useCallback((targetAppUrl: string) => {
+  const cleanupFallback = useCallback(() => {
     if (fallbackCleanupRef.current) {
       fallbackCleanupRef.current();
       fallbackCleanupRef.current = null;
     }
-
-    const storeUrl = deviceOs === 'IOS' ? TESTFLIGHT_APP_URL : GOOGLE_PLAY_APP_URL;
-    fallbackCleanupRef.current = openAppWithFallback(targetAppUrl, storeUrl, () => {
-      fallbackCleanupRef.current = null;
-    });
-  }, [deviceOs]);
+    setOpeningState('idle');
+  }, []);
 
   useEffect(() => {
     return () => {
-      if (fallbackCleanupRef.current) {
-        fallbackCleanupRef.current();
-        fallbackCleanupRef.current = null;
-      }
+      cleanupFallback();
     };
-  }, []);
+  }, [cleanupFallback]);
 
-  const handleActionClick = async (e: React.MouseEvent<HTMLAnchorElement>, targetUrl: string) => {
-    // Ngăn trình duyệt nhảy trang ngay để đảm bảo copy clipboard hoàn tất trong user gesture
+  const launchAppWithFallback = useCallback((appUrl: string, storeUrl: string) => {
+    cleanupFallback();
+
+    let timer: number | undefined;
+    let finished = false;
+    let paused = false;
+
+    function cancelTimer() {
+      if (timer) clearTimeout(timer);
+    }
+
+    function cleanup() {
+      finished = true;
+      cancelTimer();
+      setOpeningState('idle');
+
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', cleanup);
+      window.removeEventListener('pageshow', onPageShow);
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('focus', onFocus);
+      fallbackCleanupRef.current = null;
+    }
+
+    function scheduleFallback(delay = 2500) {
+      cancelTimer();
+      const startedAt = Date.now();
+
+      timer = window.setTimeout(() => {
+        if (finished || paused || document.hidden) return;
+
+        // Hộp thoại Safari có thể làm JavaScript bị tạm dừng.
+        // Chờ thêm để nhận sự kiện xuống nền nếu app vừa mở.
+        if (Date.now() - startedAt > delay + 2000) {
+          scheduleFallback(800);
+          return;
+        }
+
+        cleanup();
+        // Mở thông báo / chuyển hướng sang Store nếu chưa có app
+        window.location.assign(storeUrl);
+      }, delay);
+    }
+
+    function onVisibility() {
+      // Trang xuống nền: có thể app đã mở → huỷ chuyển Store
+      if (document.hidden) cleanup();
+    }
+
+    function onBlur() {
+      // Mất focus có thể chỉ do hộp thoại xác nhận của Safari
+      paused = true;
+      cancelTimer();
+    }
+
+    function onFocus() {
+      if (!finished && paused && !document.hidden) {
+        paused = false;
+        scheduleFallback(800);
+      }
+    }
+
+    function onPageShow(event: PageTransitionEvent) {
+      // Quay lại trang từ bộ nhớ trình duyệt: không chuyển tiếp nữa.
+      if (event.persisted) cleanup();
+    }
+
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', cleanup);
+    window.addEventListener('pageshow', onPageShow);
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('focus', onFocus);
+
+    fallbackCleanupRef.current = cleanup;
+    scheduleFallback(2500);
+
+    try {
+      window.location.assign(appUrl);
+    } catch {
+      // Nếu trình duyệt từ chối mở app, vẫn giữ nhánh dự phòng.
+    }
+  }, [cleanupFallback]);
+
+  const handleOpenApp = async (e: React.MouseEvent) => {
     e.preventDefault();
+    if (openingState === 'opening') return;
+
     if (clickId) {
       const textToCopy = `affilate_click_id://${clickId}`;
-      await copyToClipboard(textToCopy);
+      const res = await copyToClipboard(textToCopy);
     }
 
-    if (targetUrl === appOpenUrl) {
-      startOpenWithFallback(targetUrl);
-    } else {
-      if (fallbackCleanupRef.current) {
-        fallbackCleanupRef.current();
-        fallbackCleanupRef.current = null;
-      }
-      window.setTimeout(() => {
-        window.location.assign(targetUrl);
-      }, 120);
+    if (appOpenUrl) {
+      setOpeningState('opening');
+      const storeUrl = deviceOs === 'IOS' ? TESTFLIGHT_APP_URL : GOOGLE_PLAY_APP_URL;
+      launchAppWithFallback(appOpenUrl, storeUrl);
     }
+  };
+
+  const handleOpenStore = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    cleanupFallback();
+
+    if (clickId) {
+      const textToCopy = `affilate_click_id://${clickId}`;
+      const res = await copyToClipboard(textToCopy);
+    }
+
+    const storeUrl = deviceOs === 'IOS' ? TESTFLIGHT_APP_URL : GOOGLE_PLAY_APP_URL;
+    window.setTimeout(() => {
+      window.location.assign(storeUrl);
+    }, 150);
   };
 
   async function executeRedirect(phoneValue?: string | null) {
@@ -328,11 +340,7 @@ function LandingApp() {
 
     setSubmitting(true);
     try {
-      // Copy ngay trong luồng thao tác của người dùng để Safari còn cho phép clipboard.
-      const textToCopy = `affilate_click_id://${clickId}`;
-      const copyRes = await copyToClipboard(textToCopy);
-
-      // Ghi nhận lượt click từ Landing Page về Backend sau khi thử copy.
+      // Ghi nhận lượt click từ Landing Page về Backend
       await recordAffiliateClick({
         clickId,
         partnerCode: partnerId,
@@ -341,8 +349,7 @@ function LandingApp() {
         os: deviceOs,
       });
 
-      // Chuẩn bị URL thật sau khi ghi nhận click. Thẻ <a> sẽ được auto-click
-      // sau 500ms tương tự /test-auto, đồng thời là nút bấm trực tiếp nếu bị chặn.
+      // Chuẩn bị URL mở app
       const queryParams: Record<string, string> = {
         click_id: clickId,
         screen: 'home',
@@ -351,9 +358,6 @@ function LandingApp() {
         queryParams.affiliate_id = affiliateId;
       }
       const query = new URLSearchParams(queryParams).toString();
-
-      // Cả iOS và Android đều gọi trực tiếp custom scheme demoaffiliate://open
-      // Đảm bảo hoạt động ổn định trên cả Chrome, Safari lẫn các trình duyệt nhúng (Messenger, Zalo)
       const targetUrl = `demoaffiliate://open?${query}`;
 
       setAppOpenUrl(targetUrl);
@@ -368,25 +372,13 @@ function LandingApp() {
     }
   }
 
-  // Tự động kích hoạt click thẻ <a> sau 500ms khi link mở app đã sẵn sàng (cơ chế tương tự /test-auto)
-  useEffect(() => {
-    if (!appOpenUrl) return;
-
-    const timer = window.setTimeout(() => {
-      openAppLinkRef.current?.click();
-    }, 200);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [appOpenUrl]);
-
-  // Tự động copy click_id ngay khi vừa mở web (kèm fallback ở lần chạm/click đầu tiên)
+  // Tự động copy click_id ngay khi người dùng chạm vào web lần đầu
   useEffect(() => {
     if (!clickId) return;
     const textToCopy = `affilate_click_id://${clickId}`;
 
-    const handleFirstInteraction = () => {
+    const handleFirstInteraction = async () => {
+      const res = await copyToClipboard(textToCopy);
       window.removeEventListener('click', handleFirstInteraction);
       window.removeEventListener('touchstart', handleFirstInteraction);
     };
@@ -479,69 +471,34 @@ function LandingApp() {
             <div className="loading-message">Đang chuẩn bị liên kết mở ứng dụng...</div>
           ) : appOpenUrl ? (
             <div className="open-app-card-content">
-              <p
-                role="status"
-                style={{
-                  fontSize: '14px',
-                  color: '#18233a',
-                  lineHeight: '1.5',
-                  margin: '0 0 14px',
-                  textAlign: 'center',
-                }}
-              >
+
+              <div className="button-group">
+                <button
+                  type="button"
+                  id="openApp"
+                  className="btn-open-app"
+                  onClick={handleOpenApp}
+                  disabled={openingState === 'opening'}
+                >
+                  {openingState === 'opening' ? 'Đang mở ứng dụng...' : 'Mở ứng dụng'} <span>→</span>
+                </button>
+              </div>
+
+              {/* <p className="privacy-note" style={{ margin: '14px 0 0', fontSize: '12px' }}>
                 {deviceOs === 'IOS'
-                  ? 'Đang yêu cầu mở ứng dụng. Hãy chọn "Mở" nếu Safari hỏi xác nhận.'
-                  : 'Đang yêu cầu mở ứng dụng...'}
-              </p>
-              <a
-                ref={openAppLinkRef}
-                id="openApp"
-                className="open-app-link"
-                href={appOpenUrl}
-                onClick={(e) => void handleActionClick(e, appOpenUrl)}
-              >
-                Mở ứng dụng <span>→</span>
-              </a>
-              {deviceOs === 'IOS' && (
-                <div style={{ marginTop: '18px', paddingTop: '16px', borderTop: '1px solid #edf3f7' }}>
-                  <p className="privacy-note" style={{ margin: '0 0 10px', fontSize: '13px' }}>
-                    Chưa cài ứng dụng? Cài bản thử nghiệm qua TestFlight:
-                  </p>
-                  <a
-                    className="open-app-link"
-                    style={{
-                      background: 'white',
-                      color: '#244dc9',
-                      border: '1px solid #d8dfec',
-                      marginTop: '0',
-                    }}
-                    href={TESTFLIGHT_APP_URL}
-                    onClick={(e) => void handleActionClick(e, TESTFLIGHT_APP_URL)}
-                  >
-                    Mở TestFlight để cài <span>→</span>
-                  </a>
-                </div>
-              )}
-              {deviceOs === 'ANDROID' && (
-                <div style={{ marginTop: '18px', paddingTop: '16px', borderTop: '1px solid #edf3f7' }}>
-                  <p className="privacy-note" style={{ margin: '0 0 10px', fontSize: '13px' }}>
-                    Chưa cài ứng dụng? Tải bản thử nghiệm qua Google Play:
-                  </p>
-                  <a
-                    className="open-app-link"
-                    style={{
-                      background: 'white',
-                      color: '#244dc9',
-                      border: '1px solid #d8dfec',
-                      marginTop: '0',
-                    }}
-                    href={GOOGLE_PLAY_APP_URL}
-                    onClick={(e) => void handleActionClick(e, GOOGLE_PLAY_APP_URL)}
-                  >
-                    Mở Google Play để cài <span>→</span>
-                  </a>
-                </div>
-              )}
+                  ? '* Nếu bạn chưa cài ứng dụng, sau ít giây hệ thống sẽ tự động chuyển tiếp sang TestFlight.'
+                  : '* Nếu bạn chưa cài ứng dụng, sau ít giây hệ thống sẽ tự động chuyển tiếp sang Google Play.'}
+              </p> */}
+
+              {/* <div style={{ marginTop: '12px', textAlign: 'center' }}>
+                <a
+                  href={deviceOs === 'IOS' ? TESTFLIGHT_APP_URL : GOOGLE_PLAY_APP_URL}
+                  onClick={handleOpenStore}
+                  style={{ fontSize: '12px', color: '#244dc9', textDecoration: 'underline', cursor: 'pointer' }}
+                >
+                  {deviceOs === 'IOS' ? 'Chưa có app? Bấm để mở TestFlight trực tiếp' : 'Chưa có app? Bấm để mở Google Play'}
+                </a>
+              </div> */}
             </div>
           ) : (
             <form onSubmit={handleSubmit} noValidate>
