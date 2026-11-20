@@ -200,127 +200,24 @@ function LandingApp() {
   const [configError, setConfigError] = useState('');
   const [formError, setFormError] = useState('');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [openingState, setOpeningState] = useState<'idle' | 'opening'>('idle');
   const toastTimerRef = useRef<number | null>(null);
-  const fallbackCleanupRef = useRef<(() => void) | null>(null);
-
-  const cleanupFallback = useCallback(() => {
-    if (fallbackCleanupRef.current) {
-      fallbackCleanupRef.current();
-      fallbackCleanupRef.current = null;
-    }
-    setOpeningState('idle');
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      cleanupFallback();
-    };
-  }, [cleanupFallback]);
-
-  const launchAppWithFallback = useCallback((appUrl: string, storeUrl: string) => {
-    cleanupFallback();
-
-    let timer: number | undefined;
-    let finished = false;
-    let paused = false;
-
-    function cancelTimer() {
-      if (timer) clearTimeout(timer);
-    }
-
-    function cleanup() {
-      finished = true;
-      cancelTimer();
-      setOpeningState('idle');
-
-      document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('pagehide', cleanup);
-      window.removeEventListener('pageshow', onPageShow);
-      window.removeEventListener('blur', onBlur);
-      window.removeEventListener('focus', onFocus);
-      fallbackCleanupRef.current = null;
-    }
-
-    function scheduleFallback(delay = 2500) {
-      cancelTimer();
-      const startedAt = Date.now();
-
-      timer = window.setTimeout(() => {
-        if (finished || paused || document.hidden) return;
-
-        // Hộp thoại Safari có thể làm JavaScript bị tạm dừng.
-        // Chờ thêm để nhận sự kiện xuống nền nếu app vừa mở.
-        if (Date.now() - startedAt > delay + 2000) {
-          scheduleFallback(800);
-          return;
-        }
-
-        cleanup();
-        // Mở thông báo / chuyển hướng sang Store nếu chưa có app
-        window.location.assign(storeUrl);
-      }, delay);
-    }
-
-    function onVisibility() {
-      // Trang xuống nền: có thể app đã mở → huỷ chuyển Store
-      if (document.hidden) cleanup();
-    }
-
-    function onBlur() {
-      // Mất focus có thể chỉ do hộp thoại xác nhận của Safari
-      paused = true;
-      cancelTimer();
-    }
-
-    function onFocus() {
-      if (!finished && paused && !document.hidden) {
-        paused = false;
-        scheduleFallback(800);
-      }
-    }
-
-    function onPageShow(event: PageTransitionEvent) {
-      // Quay lại trang từ bộ nhớ trình duyệt: không chuyển tiếp nữa.
-      if (event.persisted) cleanup();
-    }
-
-    document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('pagehide', cleanup);
-    window.addEventListener('pageshow', onPageShow);
-    window.addEventListener('blur', onBlur);
-    window.addEventListener('focus', onFocus);
-
-    fallbackCleanupRef.current = cleanup;
-    scheduleFallback(2500);
-
-    try {
-      window.location.assign(appUrl);
-    } catch {
-      // Nếu trình duyệt từ chối mở app, vẫn giữ nhánh dự phòng.
-    }
-  }, [cleanupFallback]);
 
   const handleOpenApp = async (e: React.MouseEvent) => {
     e.preventDefault();
-    if (openingState === 'opening') return;
-
     if (clickId) {
       const textToCopy = `affilate_click_id://${clickId}`;
       const res = await copyToClipboard(textToCopy);
     }
 
     if (appOpenUrl) {
-      setOpeningState('opening');
-      const storeUrl = deviceOs === 'IOS' ? TESTFLIGHT_APP_URL : GOOGLE_PLAY_APP_URL;
-      launchAppWithFallback(appOpenUrl, storeUrl);
+      window.setTimeout(() => {
+        window.location.assign(appOpenUrl);
+      }, 150);
     }
   };
 
   const handleOpenStore = async (e: React.MouseEvent) => {
     e.preventDefault();
-    cleanupFallback();
-
     if (clickId) {
       const textToCopy = `affilate_click_id://${clickId}`;
       const res = await copyToClipboard(textToCopy);
@@ -473,32 +370,24 @@ function LandingApp() {
             <div className="open-app-card-content">
 
               <div className="button-group">
-                <button
-                  type="button"
+                <a
                   id="openApp"
                   className="btn-open-app"
+                  href={appOpenUrl}
                   onClick={handleOpenApp}
-                  disabled={openingState === 'opening'}
                 >
-                  {openingState === 'opening' ? 'Đang mở ứng dụng...' : 'Mở ứng dụng'} <span>→</span>
-                </button>
-              </div>
+                  Mở ứng dụng <span>→</span>
+                </a>
 
-              {/* <p className="privacy-note" style={{ margin: '14px 0 0', fontSize: '12px' }}>
-                {deviceOs === 'IOS'
-                  ? '* Nếu bạn chưa cài ứng dụng, sau ít giây hệ thống sẽ tự động chuyển tiếp sang TestFlight.'
-                  : '* Nếu bạn chưa cài ứng dụng, sau ít giây hệ thống sẽ tự động chuyển tiếp sang Google Play.'}
-              </p> */}
-
-              {/* <div style={{ marginTop: '12px', textAlign: 'center' }}>
                 <a
+                  className="btn-open-store"
                   href={deviceOs === 'IOS' ? TESTFLIGHT_APP_URL : GOOGLE_PLAY_APP_URL}
                   onClick={handleOpenStore}
-                  style={{ fontSize: '12px', color: '#244dc9', textDecoration: 'underline', cursor: 'pointer' }}
                 >
-                  {deviceOs === 'IOS' ? 'Chưa có app? Bấm để mở TestFlight trực tiếp' : 'Chưa có app? Bấm để mở Google Play'}
+                  {deviceOs === 'IOS' ? 'Tải qua TestFlight' : 'Tải qua Google Play'} <span>→</span>
                 </a>
-              </div> */}
+              </div>
+
             </div>
           ) : (
             <form onSubmit={handleSubmit} noValidate>
